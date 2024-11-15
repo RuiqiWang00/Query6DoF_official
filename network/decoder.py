@@ -10,7 +10,7 @@ DECODER_REGISTRY = Registry("DECODER")
 
 @DECODER_REGISTRY.register_module()
 class deep_prior_decoderv2_9(nn.Module):
-    def __init__(self,input_dim=256,group=4,cat_num=6,middle_dim=1024,training=False,vis=False) -> None:
+    def __init__(self,input_dim=256,group=4,cat_num=6,middle_dim=1024,training=False,vis=False,time_series=False) -> None:
         super().__init__()
         self.input_dim=input_dim
         self.group=group
@@ -33,6 +33,7 @@ class deep_prior_decoderv2_9(nn.Module):
         self.alpha1=torch.nn.parameter.Parameter(data=torch.tensor([1],dtype=torch.float32),requires_grad=True)
         self.alpha2=torch.nn.parameter.Parameter(data=torch.tensor([1],dtype=torch.float32),requires_grad=True)
         self.vis=vis
+        self.time_series=time_series
 
 
     def forward(self,prior_feat,inst_feat,index,encoder_input):
@@ -109,10 +110,14 @@ class deep_prior_decoderv2_9(nn.Module):
 
         inst_feat=self.mlp5(inst_feat)
 
-        inst_feat=torch.nn.functional.adaptive_avg_pool1d(inst_feat.transpose(1,2),1).transpose(1,2) #B,1,D
+        inst_feat=torch.nn.functional.adaptive_avg_pool1d(inst_feat.transpose(1,2),1).transpose(1,2).contiguous() #B,1,D
         if self.training:
+            if self.time_series:
+                return inst_feat,coord,response_coord,prior_feat
             return inst_feat,coord,response_coord
         elif not self.vis:
+            if self.time_series:
+                return inst_feat, prior_feat
             return inst_feat
         else:
             return inst_feat,coord,response_coord,iam1,iam2
@@ -135,13 +140,13 @@ class global_enhancev2(nn.Module):
         '''
         feat:B,N,D
         '''
-        global_feat=torch.nn.functional.adaptive_avg_pool1d(feat.transpose(1,2),1) #B,D,1
+        global_feat=torch.nn.functional.adaptive_avg_pool1d(feat.transpose(1,2).contiguous(),1) #B,D,1
         global_feat=self.linear(global_feat)
         atten=torch.bmm(feat,global_feat) #B,N,1
         mean=atten.squeeze(-1).mean(-1) #B
         std=torch.std(atten.squeeze(-1), dim=-1, unbiased=False) 
         atten=self.alpha*(atten-mean.view(-1,1,1))/(std.view(-1,1,1)+1e-5)+self.beta
-        global_feat=torch.bmm(atten,global_feat.transpose(1,2)) #B,N,D
+        global_feat=torch.bmm(atten,global_feat.transpose(1,2).contiguous()) #B,N,D
         feat=feat+global_feat #B,N,D
         return feat
 

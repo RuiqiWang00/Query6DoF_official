@@ -26,7 +26,7 @@ class PoseDataset(data.Dataset):
             data_dir:
             n_pts: number of selected foreground points
         """
-
+        super().__init__()
         self.source = source
         self.mode = mode
         self.data_dir = data_dir
@@ -296,7 +296,6 @@ class PoseDataset(data.Dataset):
 
         return data_dict
 
-    @torch.no_grad()
     def get_gt_v(self,Rs, axis=2):
         # TODO use 3 axis, the order remains: do we need to change order?
         if axis == 3:
@@ -307,8 +306,6 @@ class PoseDataset(data.Dataset):
             gt_red = Rs[:,0:1]
         return gt_green, gt_red
 
-
-    @torch.no_grad()
     def data_augment(self,PC,gt_R,gt_t,gt_s,sym,aug_bb,aug_rt_t,aug_rt_r,model_point,nocs_scale,PC_nocs,obj_id):
         prop_bb = torch.rand(1)
         if prop_bb < 0.3:
@@ -485,3 +482,256 @@ class PoseDataset(data.Dataset):
         # scale residual
         return np.array([lx_t - unitx, ly_t - unity, lz_t - unitz])/1000.0, np.array([unitx, unity, unitz])/1000.0
 
+
+class continue_Dataset(PoseDataset):
+    def __init__(self,source, mode, data_dir, n_pts, vis,img_size=192, per_obj=None,use_cache=False,use_augment=True):
+        super().__init__(source, mode, data_dir, n_pts, vis,img_size, per_obj,use_cache)
+        self.source = source
+        self.mode = mode
+        self.data_dir = data_dir
+        self.n_pts = n_pts
+        self.vis=vis
+        self.per_obj=per_obj
+        self.img_size=img_size
+        self.use_augment=use_augment
+
+        assert source in ['Real']
+        assert mode in ['train', 'test']
+        img_list_path = ['CAMERA/train_list.txt', 'Real/train_list.txt',
+                         'CAMERA/val_list.txt', 'Real/test_list.txt']
+        model_file_path = ['obj_models/camera_train.pkl', 'obj_models/real_train.pkl',
+                           'obj_models/camera_val.pkl', 'obj_models/real_test.pkl']
+        instance_dict_path=['Real/train_model_img_path.pkl','Real/test_model_img_path.pkl']
+        if mode == 'train':
+            del img_list_path[2:]
+            del model_file_path[2:]
+        else:
+            del img_list_path[:2]
+            del model_file_path[:2]
+        if source == 'CAMERA':
+            del img_list_path[-1]
+            del model_file_path[-1]
+        elif source == 'Real':
+            del img_list_path[0]
+            del model_file_path[0]
+        elif source=='CAMERA+Real':
+            del img_list_path[2:]
+
+        img_list={}
+        for path in instance_dict_path:
+            with open(os.path.join(data_dir,path),'rb') as f:
+                img_list.update(cPickle.load(f))
+        
+        self.img_list=img_list
+        self.index_table=[]
+        for key,value in self.img_list.items():
+            for i in range(len(value)):
+                self.index_table.append((key,i))
+        self.length=len(self.index_table)
+
+        with open(os.path.join(data_dir, 'obj_models/mug_meta.pkl'), 'rb') as f:
+            self.mug_meta = cPickle.load(f)
+        self.mean_shapes = np.load('assets/mean_points_emb.npy')
+        self.cat_names = ['bottle', 'bowl', 'camera', 'can', 'laptop', 'mug']
+        self.camera_intrinsics = [577.5, 577.5, 319.5, 239.5]    # [fx, fy, cx, cy]
+        self.real_intrinsics = [591.0125, 590.16775, 322.525, 244.11084]
+        self.sym_ids = [0, 1, 3]    # 0-indexed
+        self.norm_scale = 1000.0    # normalization scale
+        self.shift_range = 0.01
+
+        models = {}
+        for path in model_file_path:
+            with open(os.path.join(data_dir, path), 'rb') as f:
+                models.update(cPickle.load(f))
+        self.models = models
+
+        self.xmap = np.array([[i for i in range(640)] for j in range(480)])
+        self.ymap = np.array([[j for i in range(640)] for j in range(480)])
+
+        print('{} images found.'.format(self.length))
+
+    def __len__(self):
+        return self.length
+    
+    def __getitem__(self, index):
+        model_name, model_index =self.index_table[index]
+        img_path=os.path.join(self.data_dir, self.img_list[model_name][model_index])
+        cur_frame=self.get_img_data(model_index,model_name)
+        
+        fold_name=img_path.split('/')[-2]
+        select_frame=[]
+        for i in range(1,10):
+            if model_index-i>=0 and self.img_list[model_name][model_index-i].split('/')[-2]==fold_name:
+                select_frame.append(model_index-i)
+            if model_index+i<len(self.img_list[model_name]) and self.img_list[model_name][model_index+i].split('/')[-2]==fold_name:
+                select_frame.append(model_index+i)
+        another_frame_index=random.choice(select_frame)
+
+        another_frame=self.get_img_data(another_frame_index,model_name)
+
+        return dict(
+            cur_frame=cur_frame,
+            another_frame=another_frame
+        )
+
+        
+    def get_img_data(self,index,model_name):
+        img_path=os.path.join(self.data_dir, self.img_list[model_name][index])
+        id=self.img_list[model_name][index].split('/')[-1]
+
+        depth = load_depth(img_path)
+
+        mask = cv2.imread(img_path + '_mask.png')[:, :, 2]
+
+        coord = cv2.imread(img_path + '_coord.png')[:, :, :3]
+        coord = coord[:, :, (2, 1, 0)]
+        coord = np.array(coord, dtype=np.float32) / 255
+        coord[:, :, 2] = 1 - coord[:, :, 2]
+
+        with open(img_path + '_label.pkl', 'rb') as f:
+            gts = cPickle.load(f)
+        if 'CAMERA' in img_path.split('/'):
+            cam_fx, cam_fy, cam_cx, cam_cy = self.camera_intrinsics
+        else:
+            cam_fx, cam_fy, cam_cx, cam_cy = self.real_intrinsics
+
+        cam_K=np.identity(3, dtype=np.float32)
+        cam_K[0,0],cam_K[1,1],cam_K[0,2],cam_K[1,2]=cam_fx, cam_fy, cam_cx, cam_cy
+
+        for i,model in gts['model_list']:
+            if model==model_name:
+                idx=i
+                break
+
+        cat_id=gts['class_ids'][idx]-1
+        inst_id = gts['instance_ids'][idx]
+        rmin, rmax, cmin, cmax = get_bbox(gts['bboxes'][idx])
+        # sample points from mask
+        mask = np.equal(mask, inst_id)
+        mask = np.logical_and(mask, depth > 0)
+        mask = mask.flatten()
+
+        depth_masked=(depth.flatten())[mask]  #N
+        xmap_masked=(self.xmap.flatten())[mask]
+        ymap_masked=(self.ymap.flatten())[mask]
+
+        pt2=depth_masked/self.norm_scale
+        pt0 = (xmap_masked - cam_cx) * pt2 / cam_fx
+        pt1 = (ymap_masked - cam_cy) * pt2 / cam_fy
+        points=np.stack((pt0,pt1,pt2),axis=1)  #N,3
+
+        l_all=points.shape[0]
+
+        if l_all>=self.n_pts:
+            choose=np.random.choice(l_all,self.n_pts,replace=False)
+        else:
+            choose=np.random.choice(l_all,self.n_pts,replace=True)
+
+        nocs = coord.reshape(-1,3)[mask,...][choose, :] - 0.5
+        
+        points=points[choose,...]
+
+        crop_w = rmax - rmin
+        ratio = self.img_size / crop_w
+        col_idx = choose % crop_w
+        row_idx = choose // crop_w
+        choose = (np.floor(row_idx * ratio) * self.img_size + np.floor(col_idx * ratio)).astype(np.int64)
+
+
+        scale = gts['scales'][idx]
+        rotation = gts['rotations'][idx]
+        translation = gts['translations'][idx]
+        prior = self.mean_shapes[cat_id].astype(np.float32)
+
+        if cat_id==5:
+            T0 = self.mug_meta[gts['model_list'][idx]][0]
+            s0 = self.mug_meta[gts['model_list'][idx]][1]
+            nocs = s0 * (nocs + T0)
+        
+        # map ambiguous rotation to canonical rotation
+        if cat_id in self.sym_ids:
+            rotation = gts['rotations'][idx]
+            # assume continuous axis rotation symmetry
+            theta_x = rotation[0, 0] + rotation[2, 2]
+            theta_y = rotation[0, 2] - rotation[2, 0]
+            r_norm = math.sqrt(theta_x**2 + theta_y**2)
+            s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
+                            [0.0,            1.0,  0.0           ],
+                            [theta_y/r_norm, 0.0,  theta_x/r_norm]])
+            rotation = rotation @ s_map
+            nocs = nocs @ s_map
+
+        sRT = np.identity(4, dtype=np.float32)
+        RT=np.identity(4,dtype=np.float32)
+        sRT[:3, :3] = scale * rotation
+        sRT[:3, 3] = translation
+        RT[:3,:3]=rotation
+        RT[:3,3]=translation
+
+        model = self.models[gts['model_list'][idx]].astype(np.float32)
+
+        model=torch.as_tensor(model.astype(np.float32))
+        points=torch.as_tensor(points.astype(np.float32))
+        R=torch.as_tensor(rotation.astype(np.float32))
+        t=torch.as_tensor(translation.astype(np.float32))
+        s=torch.as_tensor(scale.astype(np.float32))
+        nocs=torch.as_tensor(nocs.astype(np.float32))
+
+        sym_info = self.get_sym_info(cat_id, mug_handle=1)
+        bb_aug, rt_aug_t, rt_aug_R = self.generate_aug_parameters()
+        dimension_delta,mean_shape=self.get_fs_net_scale( model, s,cat_id)
+
+        sym_info=torch.as_tensor(sym_info.astype(np.float32)).contiguous()
+        bb_aug, rt_aug_t, rt_aug_R=torch.as_tensor(bb_aug, dtype=torch.float32).contiguous(),torch.as_tensor(rt_aug_t, dtype=torch.float32).contiguous(),torch.as_tensor(rt_aug_R, dtype=torch.float32).contiguous()
+        dimension_delta=torch.as_tensor(dimension_delta,dtype=torch.float32).contiguous()
+        mean_shape=torch.as_tensor(mean_shape,dtype=torch.float32).contiguous()
+
+        if self.use_augment:
+            points, R, t, dimension, model, nocs,s=self.data_augment(points,R,t,dimension_delta+mean_shape,sym_info,bb_aug,rt_aug_t,rt_aug_R,model,s,nocs,cat_id)
+
+            dimension_delta=dimension-mean_shape
+
+            if cat_id in self.sym_ids:
+                # assume continuous axis rotation symmetry
+                R=R.numpy()
+                nocs=nocs.numpy()
+                theta_x = R[0, 0] + R[2, 2]
+                theta_y = R[0, 2] - R[2, 0]
+                r_norm = math.sqrt(theta_x**2 + theta_y**2)
+                s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
+                                [0.0,            1.0,  0.0           ],
+                                [theta_y/r_norm, 0.0,  theta_x/r_norm]])
+                R = R @ s_map
+                nocs = nocs @ s_map
+                R=torch.as_tensor(R.astype(np.float32))
+                nocs=torch.as_tensor(nocs.astype(np.float32))
+
+        gt_green,gt_red=self.get_gt_v(R)
+        
+
+        #data=data[choose,...]
+        data_dict={}
+        if self.mode=='test':
+            data_dict['handle_visiblity']=gts['handle_visibility'][idx]
+        data_dict['points']=points.contiguous()
+        data_dict['nocs']=nocs.contiguous()
+        data_dict['prior']=torch.as_tensor(prior).contiguous()
+        data_dict['cat_id']=torch.as_tensor(cat_id)
+        data_dict['R']=R.contiguous()
+        data_dict['t']=t.contiguous()
+        data_dict['s']=s.contiguous()
+        data_dict['gt_green']=gt_green.contiguous()
+        data_dict['gt_red']=gt_red.contiguous()
+        data_dict['dimension_delta']=dimension_delta.contiguous()
+        data_dict['mean_shape']=mean_shape.contiguous()
+        data_dict['sym']=sym_info.contiguous()
+        if self.vis:
+            data_dict['RT']=torch.as_tensor(RT.astype(np.float32)).contiguous()
+            data_dict['id']=id
+            data_dict['sRT']=torch.as_tensor(sRT.astype(np.float32)).contiguous()
+            data_dict['image']=image
+            data_dict['cam_K']=cam_K
+        data_dict['model']=model.contiguous()
+        data_dict['img_path']=img_path
+
+        return data_dict

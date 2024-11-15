@@ -78,8 +78,8 @@ class r_lossv2(nn.Module):
         self.beta=beta
         self.loss_f=loss
     def forward(self,pred_r,gt_red,gt_green,sym):
-        pred_green=pred_r[:,:,1:2] #B,3,1
-        pred_red=pred_r[:,:,0:1] #B,3,1
+        pred_green=pred_r[:,:,1:2].contiguous() #B,3,1
+        pred_red=pred_r[:,:,0:1].contiguous() #B,3,1
         if self.loss_f=='smooth':
             green_loss=nn.functional.smooth_l1_loss(gt_green,pred_green,beta=self.beta)
         else:
