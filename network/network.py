@@ -6,7 +6,7 @@ import math
 import numpy as np
 from .decoder import DECODER_REGISTRY
 from .encoder import ENCODER_REGISTRY
-from .loss import LOSS_REGISTRY, chamfer_lossv2
+from .loss import LOSS_REGISTRY, chamfer_lossv2, r_lossv2, t_loss, s_loss
 from mmengine import Registry
 
 NETWORK_REGISTRY = Registry("NETWORK")
@@ -186,6 +186,9 @@ class unsupervise_model(Sparsenetv7):
         self.unsupervised=unsupervised
         self.coord_loss=chamfer_lossv2(weight=chamfer_loss_weight)
         self.pose_loss_weight = pose_loss_weight
+        self.r_loss = r_lossv2(weight=pose_loss_weight, beta=0.001)
+        self.t_loss = t_loss(weight=pose_loss_weight,beta=0.005)
+        self.s_loss = s_loss(weight=pose_loss_weight, beta=0.005)
 
     def forward(self,batched_inputs,prior_feat_=None):
         if not (self.training and self.unsupervised):
@@ -196,6 +199,12 @@ class unsupervise_model(Sparsenetv7):
         
         syn_loss_dict = super().forward(syn_data)
         real_loss_dict = self.unsupervise_train(real_data)
+        # b1=syn_data['points'].shape[0]
+        # b2=real_data['points'].shape[0]
+        # for key in syn_loss_dict:
+        #     syn_loss_dict[key]=syn_loss_dict[key]*b1/(b1+b2)
+        # for key in real_loss_dict:
+        #     real_loss_dict[key] = real_loss_dict *b2/(b1+b2)
         syn_loss_dict.update(real_loss_dict)
         return syn_loss_dict
 
@@ -203,22 +212,25 @@ class unsupervise_model(Sparsenetv7):
         points=batched_inputs['points']
         category=batched_inputs['cat_id']
         mean_shape=batched_inputs['mean_shape']
-
+        sym=batched_inputs['sym']
         pred1 = self.delta_unsupervise(points,mean_shape,category)
         pred2 = self.delta_unsupervise(points,mean_shape,category)
-        return self.unsupervise_loss(pred1,pred2)
+        return self.unsupervise_loss(pred1,pred2,sym)
 
-    def unsupervise_loss(self,pred1, pred2):
+    def unsupervise_loss(self,pred1, pred2,sym):
         r1=pred1['pred_r']
         t1=pred1['pred_t']
         s1=pred1['pred_s']
         r2=pred2['pred_r']
         t2=pred2['pred_t']
         s2=pred2['pred_s']
-        pose_loss = self.PoseDis(r1,t1,s1,r2,t2,s2)
+        r_loss = self.r_loss(r1,r2[...,1:2],r2[...,0:1],sym)
+        t_loss=self.t_loss(t1,t2)
+        s_loss=self.s_loss(s1,s2)
+        # pose_loss = self.PoseDis(r1,t1,s1,r2,t2,s2)
         loss_chamfer = self.coord_loss(pred1['coord'],pred2['coord'])
         return dict(
-            un_pose_loss = pose_loss,
+            un_pose_loss = r_loss+t_loss+s_loss,
             un_chamfer = loss_chamfer
         )
     

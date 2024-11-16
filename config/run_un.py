@@ -49,7 +49,7 @@ MODEL = dict(
     ],
     unsupervised=True,
     pose_loss_weight = 0.2,
-    chamfer_loss_weight = 0.2
+    chamfer_loss_weight = 0.6
     )
 
 

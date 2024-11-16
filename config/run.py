@@ -61,9 +61,9 @@ DATASET = dict(
 
 DATALOADER = dict(
     type='DataLoader',
-    batch_size=15,
+    batch_size=30,
     shuffle=False,
-    num_workers=4,
+    num_workers=10,
     pin_memory=True,
     persistent_workers=True,
     prefetch_factor=2,
