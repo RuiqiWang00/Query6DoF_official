@@ -1,8 +1,8 @@
 _base_=['_base_.py']
 CFG_NAME = ''
 OUTPUT_DIR = 'runs'
-RUN_NAME = 'init'
-PRINT_FREQ = 50
+RUN_NAME = 'run'
+PRINT_FREQ = 100
 DIST_BACKEND = 'nccl'
 AUTO_RESUME = True
 RESUME_FILE = ''
@@ -50,7 +50,7 @@ MODEL = dict(
 
 DATASET = dict(
     type='PoseDataset',
-    source='CAMERA',
+    source='Real',
     mode='train',
     data_dir='data',
     n_pts=1024,
@@ -61,9 +61,9 @@ DATASET = dict(
 
 DATALOADER = dict(
     type='DataLoader',
-    batch_size=86,
+    batch_size=30,
     shuffle=False,
-    num_workers=15,
+    num_workers=10,
     pin_memory=True,
     persistent_workers=True,
     prefetch_factor=2,
@@ -75,5 +75,5 @@ if VIS:
 
 
 OPTIMIZER = dict(type='AdamW', lr=0.0001, weight_decay=1e-4)
-SCHEDULER = dict(type='CosineAnnealingLR', T_max=249127*100//(86*4), eta_min=1e-6, last_epoch=-1, verbose=False)
+SCHEDULER = dict(type='CosineAnnealingLR', T_max=4, eta_min=1e-6, last_epoch=-1, verbose=False)
 TRAIN = dict(BEGIN_EPOCH=0, END_EPOCH=101, SAVE_EPOCH_STEP=10, VIS=False)

@@ -224,7 +224,7 @@ class unsupervise_model(Sparsenetv7):
         r2=pred2['pred_r']
         t2=pred2['pred_t']
         s2=pred2['pred_s']
-        r_loss = self.r_loss(r1,r2[...,1:2],r2[...,0:1],sym)
+        r_loss = self.r_loss(r1,r2[...,0:1],r2[...,1:2],sym)
         t_loss=self.t_loss(t1,t2)
         s_loss=self.s_loss(s1,s2)
         # pose_loss = self.PoseDis(r1,t1,s1,r2,t2,s2)

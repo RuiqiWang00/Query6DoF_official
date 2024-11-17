@@ -191,8 +191,8 @@ def main_worker(rank, world_size, dist_url, final_output_dir, cfg):
         raise NotImplementedError
     
     for epoch in range(begin_epoch, cfg.TRAIN.END_EPOCH):
-        # real_loader.dataset.set_epoch(epoch)
-        # camera_loader.dataset.set_epoch(epoch)
+        real_loader.dataset.set_epoch(epoch)
+        camera_loader.dataset.set_epoch(epoch)
         if cfg.DDP and world_size>1:
             real_loader.sampler.set_epoch(epoch)
             camera_loader.sampler.set_epoch(epoch)

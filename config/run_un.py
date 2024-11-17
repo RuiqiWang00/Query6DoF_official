@@ -2,7 +2,7 @@ _base_=['_base_.py']
 CFG_NAME = ''
 OUTPUT_DIR = 'runs'
 RUN_NAME = 'unsupervise'
-PRINT_FREQ = 50
+PRINT_FREQ = 25
 DIST_BACKEND = 'nccl'
 AUTO_RESUME = True
 RESUME_FILE = ''
@@ -15,7 +15,7 @@ train=True
 
 is_iter=True
 AUTO_RESUME = True
-RESUME_FILE = '/data/ruiqiwang/codes/Query6DoF_official/runs/CAMERA/init/model/checkpoint_epoch_20.tar.pth'
+RESUME_FILE = '/data/ruiqiwang/codes/Query6DoF_official/runs/CAMERA/init/model/checkpoint_epoch_100.tar.pth'
 MODEL = dict(
     type='unsupervise_model',
     name='Sparsenetv7',
@@ -76,9 +76,9 @@ REAL_DATASET = dict(
 
 CAMERA_DATALOADER = dict(
     type='DataLoader',
-    batch_size=60,
+    batch_size=45,
     shuffle=False,
-    num_workers=5,
+    num_workers=8,
     pin_memory=True,
     persistent_workers=True,
     prefetch_factor=2,
@@ -86,9 +86,9 @@ CAMERA_DATALOADER = dict(
 
 REAL_DATALOADER = dict(
     type='DataLoader',
-    batch_size=20,
+    batch_size=15,
     shuffle=False,
-    num_workers=5,
+    num_workers=8,
     pin_memory=True,
     persistent_workers=True,
     prefetch_factor=2,
@@ -99,6 +99,6 @@ REAL_DATALOADER = dict(
 #     DATALOADER['num_workers']=1
 
 
-OPTIMIZER = dict(type='AdamW', lr=0.0001, weight_decay=1e-4)
-SCHEDULER = dict(type='CosineAnnealingLR', T_max=4318*100//(80), eta_min=1e-6, last_epoch=-1, verbose=False)
-TRAIN = dict(BEGIN_EPOCH=0, END_EPOCH=101, SAVE_EPOCH_STEP=4, VIS=False)
+OPTIMIZER = dict(type='AdamW', lr=0.0001, weight_decay=1e-7)
+SCHEDULER = dict(type='CosineAnnealingLR', T_max=4318*100//(15*4), eta_min=1e-6, last_epoch=-1, verbose=False)
+TRAIN = dict(BEGIN_EPOCH=0, END_EPOCH=101, SAVE_EPOCH_STEP=10, VIS=False)

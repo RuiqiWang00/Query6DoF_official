@@ -119,7 +119,7 @@ class Trainer(object):
         optimizer.zero_grad()
         self.model.train()
         if self.rank == 0:
-            lr_msg='lr: {0}'.format(optimizer.state_dict()['param_groups'][0]['lr'])
+            lr_msg='lr: {0}'.format(self.lr_scheduler.get_last_lr()[0])
             self.logger.info(lr_msg)
         end = time.time()
             
