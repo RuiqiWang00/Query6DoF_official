@@ -1,9 +1,6 @@
 import torch
 import torch.nn as nn
 import os
-import cv2
-import math
-import numpy as np
 from .decoder import DECODER_REGISTRY
 from .encoder import ENCODER_REGISTRY
 from .loss import LOSS_REGISTRY, chamfer_lossv2, r_lossv2, t_loss, s_loss
@@ -170,7 +167,8 @@ class unsupervise_model(Sparsenetv7):
                 vis=False,
                 unsupervised=False,
                 pose_loss_weight = 1.0,
-                chamfer_loss_weight = 1.0
+                chamfer_loss_weight = 1.0,
+                align_loss_weight=0.02
                 ) -> None:
         super().__init__(backbone=backbone,
                 decoder=decoder,
@@ -189,6 +187,7 @@ class unsupervise_model(Sparsenetv7):
         self.r_loss = r_lossv2(weight=pose_loss_weight, beta=0.001)
         self.t_loss = t_loss(weight=pose_loss_weight,beta=0.005)
         self.s_loss = s_loss(weight=pose_loss_weight, beta=0.005)
+        self.align_loss_weight = align_loss_weight
 
     def forward(self,batched_inputs,prior_feat_=None):
         if not (self.training and self.unsupervised):
@@ -215,15 +214,16 @@ class unsupervise_model(Sparsenetv7):
         sym=batched_inputs['sym']
         pred1 = self.delta_unsupervise(points,mean_shape,category)
         pred2 = self.delta_unsupervise(points,mean_shape,category)
-        return self.unsupervise_loss(pred1,pred2,sym)
+        return self.unsupervise_loss(pred1,pred2,sym,points)
 
-    def unsupervise_loss(self,pred1, pred2,sym):
+    def unsupervise_loss(self,pred1, pred2,sym,points):
         r1=pred1['pred_r']
         t1=pred1['pred_t']
         s1=pred1['pred_s']
         r2=pred2['pred_r']
         t2=pred2['pred_t']
         s2=pred2['pred_s']
+        align_loss=self.align_loss(pred1,pred2,points)
         r_loss = self.r_loss(r1,r2[...,0:1],r2[...,1:2],sym)
         t_loss=self.t_loss(t1,t2)
         s_loss=self.s_loss(s1,s2)
@@ -231,8 +231,22 @@ class unsupervise_model(Sparsenetv7):
         loss_chamfer = self.coord_loss(pred1['coord'],pred2['coord'])
         return dict(
             un_pose_loss = r_loss+t_loss+s_loss,
-            un_chamfer = loss_chamfer
+            un_chamfer = loss_chamfer,
+            align_loss=align_loss
         )
+    
+    def align_loss(self,pred1,pred2,points):
+        r1=pred1['pred_r']
+        t1=pred1['pred_t_gt']
+        s1=pred1['pred_s_gt']
+        r2=pred2['pred_r']
+        t2=pred2['pred_t_gt']
+        s2=pred2['pred_s_gt']
+        def get_gt(R,t,s,points):
+            s=torch.linalg.norm(s,dim=-1,keepdim=True)
+            return torch.bmm(R.transpose(1,2)/s[...,None],(points-t.unsqueeze(dim=1)).transpose(1,2)).transpose(1,2)
+        return self.align_loss_weight*(torch.nn.functional.smooth_l1_loss(pred1['response_coord'],get_gt(r1,t1,s1,points),beta=0.1,reduction='none').sum(-1).mean()+\
+            torch.nn.functional.smooth_l1_loss(pred2['response_coord'],get_gt(r2,t2,s2,points),beta=0.1,reduction='none').sum(-1).mean())
     
 
     def PoseDis(self,r1, t1, s1, r2, t2, s2):
@@ -277,7 +291,10 @@ class unsupervise_model(Sparsenetv7):
             pred_r=pred_r1,
             pred_t=pred_t,
             pred_s=pred_s1,
-            coord = coord
+            coord = coord,
+            response_coord = response_coord,
+            pred_t_gt=pred_t+mean_t,
+            pred_s_gt=pred_s1+mean_shape
         )
 
 

@@ -1,7 +1,7 @@
 _base_=['_base_.py']
 CFG_NAME = ''
 OUTPUT_DIR = 'runs'
-RUN_NAME = 'unsupervise'
+RUN_NAME = 'unsupervise_w_align_loss'
 PRINT_FREQ = 25
 DIST_BACKEND = 'nccl'
 AUTO_RESUME = True
@@ -39,7 +39,7 @@ MODEL = dict(
     input_dim=256,
     cat_num=6,
     training=train,
-    loss_name=['r','t','s','chamfer','nocs','un_pose_loss','un_chamfer'],
+    loss_name=['r','t','s','chamfer','nocs','un_pose_loss','un_chamfer','align_loss'],
     losses=[
         dict(type='r_lossv2', weight=1.0,beta=0.001),
         dict(type='t_loss', weight=1,beta=0.005),
@@ -49,6 +49,7 @@ MODEL = dict(
     ],
     unsupervised=True,
     pose_loss_weight = 0.2,
+    align_loss_weight=0.02,
     chamfer_loss_weight = 0.6
     )
 
@@ -100,5 +101,5 @@ REAL_DATALOADER = dict(
 
 
 OPTIMIZER = dict(type='AdamW', lr=0.0001, weight_decay=1e-7)
-SCHEDULER = dict(type='CosineAnnealingLR', T_max=4318*100//(15*4), eta_min=1e-6, last_epoch=-1, verbose=False)
+SCHEDULER = dict(type='CosineAnnealingLR', T_max=4318*100//(15*2), eta_min=1e-6, last_epoch=-1, verbose=False)
 TRAIN = dict(BEGIN_EPOCH=0, END_EPOCH=101, SAVE_EPOCH_STEP=10, VIS=False)

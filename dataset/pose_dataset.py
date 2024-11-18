@@ -117,8 +117,10 @@ class PoseDataset(data.Dataset):
 
     def set_epoch(self,epoch):
         random.seed(1234+epoch)
+        random.shuffle(self.random)
 
     def __getitem__(self, index):
+        
         index=self.random[index]
         img_path = os.path.join(self.data_dir, self.img_list[index])
 
