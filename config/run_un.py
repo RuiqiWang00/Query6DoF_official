@@ -1,7 +1,7 @@
 _base_=['_base_.py']
 CFG_NAME = ''
 OUTPUT_DIR = 'runs'
-RUN_NAME = 'unsupervise_w_align_loss'
+RUN_NAME = 'unsupervise'
 PRINT_FREQ = 25
 DIST_BACKEND = 'nccl'
 AUTO_RESUME = True
@@ -49,7 +49,7 @@ MODEL = dict(
     ],
     unsupervised=True,
     pose_loss_weight = 0.2,
-    align_loss_weight=0.02,
+    align_loss_weight=0,
     chamfer_loss_weight = 0.6
     )
 

@@ -99,15 +99,15 @@ def detect():
 
     model = NETWORK_REGISTRY.build(opt.MODEL)
     #model.init_para(0)
-    model = torch.nn.DataParallel(model).cuda()
     final_output_dir = create_checkpoint(opt,None)
     checkpoint_file = os.path.join(
             final_output_dir, 'model', opt.RESUME_FILE)
-    
     checkpoint = torch.load(checkpoint_file, map_location=lambda storage, loc: storage)
     model.load_state_dict(checkpoint['state_dict'])
-    model.eval()
+    model = torch.nn.DataParallel(model).cuda()
+    
 
+    model.eval()
 
     # get test data list
     img_list = [os.path.join(file_path.split('/')[0], line.rstrip('\n'))

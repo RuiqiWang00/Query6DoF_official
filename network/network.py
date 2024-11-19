@@ -5,7 +5,7 @@ from .decoder import DECODER_REGISTRY
 from .encoder import ENCODER_REGISTRY
 from .loss import LOSS_REGISTRY, chamfer_lossv2, r_lossv2, t_loss, s_loss
 from mmengine import Registry
-
+from collections import OrderedDict
 NETWORK_REGISTRY = Registry("NETWORK")
 
 
@@ -46,7 +46,7 @@ class Sparsenetv7(nn.Module):
         self.vis=vis
         self.time_series=False
 
-    def forward(self,batched_inputs, prior_feat_ = None):
+    def forward(self,batched_inputs, prior_feat_ = None, semi_supervise=False):
         points=batched_inputs['points']
         category=batched_inputs['cat_id'] #B
         if self.training:
@@ -77,8 +77,9 @@ class Sparsenetv7(nn.Module):
                 inst_feat,coord,response_coord=self.decoder(prior_feat,inst_feat,index,encoder_input)
             pred_r,pred_t,pred_s=self.pose_estimater(inst_feat,index)
             pred_t=pred_t+mean_t
+            if semi_supervise:
+                return pred_r.detach(), pred_t.detach(), pred_s.detach()
             loss_dict=self.train_forward(pred_r,pred_t,pred_s,gt_green,gt_red,t,s_delta,sym,coord,model,nocs,response_coord,prior_feat,points,R,s,mean_shape)
-            
             return loss_dict
 
         else:
@@ -95,9 +96,11 @@ class Sparsenetv7(nn.Module):
                 M=iam2.shape[1]
                 iam2=iam2.view(B,M,-1,4)
             pred_r,pred_t,pred_s=self.pose_estimater(inst_feat,index)
+            pred_t=pred_t+mean_t
+            if semi_supervise:
+                return pred_r.detach(), pred_t.detach(), pred_s.detach()
             #pred_r:B,3,3 pred_t:B,3 pred_s:B,3
             pred_s=pred_s+mean_shape
-            pred_t=pred_t+mean_t
             B=pred_r.shape[0]
             trans=torch.zeros((B,4,4),device=device)
             nocs_scale=torch.linalg.norm(pred_s,dim=-1,keepdim=True) #B,1
@@ -223,7 +226,7 @@ class unsupervise_model(Sparsenetv7):
         r2=pred2['pred_r']
         t2=pred2['pred_t']
         s2=pred2['pred_s']
-        align_loss=self.align_loss(pred1,pred2,points)
+        # align_loss=self.align_loss(pred1,pred2,points)
         r_loss = self.r_loss(r1,r2[...,0:1],r2[...,1:2],sym)
         t_loss=self.t_loss(t1,t2)
         s_loss=self.s_loss(s1,s2)
@@ -232,7 +235,7 @@ class unsupervise_model(Sparsenetv7):
         return dict(
             un_pose_loss = r_loss+t_loss+s_loss,
             un_chamfer = loss_chamfer,
-            align_loss=align_loss
+            # align_loss=align_loss
         )
     
     def align_loss(self,pred1,pred2,points):
@@ -317,8 +320,62 @@ class unsupervise_model(Sparsenetv7):
     def cross_product(self,u, v):
         return torch.cross(u,v,dim=-1)
 
+@NETWORK_REGISTRY.register_module()
+class mean_teacher(nn.Module):
+    def __init__(self,
+                model,
+                ema_gamma):
+        super().__init__()
+        self.model = NETWORK_REGISTRY.build(model)
+        self.ema_model = NETWORK_REGISTRY.build(model)
+        for param in self.ema_model.parameters():
+            param.requires_grad = False
+        self.ema_gamma=ema_gamma
+        self.load=False
 
+    def init_model(self,init_path):
+        checkpoint = torch.load(init_path, map_location=lambda storage, loc: storage)
+        checkpoint = checkpoint['state_dict']
+        if 'module' in (list(checkpoint.keys()))[0]:
+            new_checkpoint = OrderedDict()
+            for key in checkpoint.keys():
+                new_checkpoint['.'.join(key.split('.')[1:])] = checkpoint[key]
+            checkpoint = new_checkpoint
+        self.model.load_state_dict(checkpoint)
+        self.ema_model.load_state_dict(checkpoint)
+        self.load=True
+        
 
+    def forward(self,batched_inputs):
+        assert self.training and self.load
+        syn_data = batched_inputs['syn']
+        real_data = batched_inputs['real']
+        with torch.no_grad():
+            self.ema_model.eval()
+            pred_r_teacher, pred_t_teacher, pred_s_teacher = self.ema_model(real_data, semi_supervise=True)
+        real_data['R'] = pred_r_teacher
+        real_data['s_delta'] = pred_s_teacher
+        real_data['t'] = pred_t_teacher
+        real_data['gt_green'] , real_data['gt_red'] = self.get_gt_v(pred_r_teacher)
+        syn_loss_dict=self.model(syn_data)
+        real_loss_dict=self.model(real_data)
+        real_loss_dict = {"semi_" + key: value for key, value in real_loss_dict.items()}
+        syn_loss_dict.update(real_loss_dict)
+        return syn_loss_dict
+
+    def ema_update(self):
+        for ema_param, param in zip(self.ema_model.parameters(), self.model.parameters()):
+            ema_param.data.mul_(self.ema_gamma).add_(1 - self.ema_gamma, param.data)
+
+    def get_gt_v(self,Rs, axis=2):
+        # TODO use 3 axis, the order remains: do we need to change order?
+        if axis == 3:
+            raise NotImplementedError
+        else:
+            assert axis == 2
+            gt_green = Rs[:,:,1:2]
+            gt_red = Rs[:,:,0:1]
+        return gt_green, gt_red
 
 @NETWORK_REGISTRY.register_module()
 class time_series_model(nn.Module):

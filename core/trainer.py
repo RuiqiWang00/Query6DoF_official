@@ -11,8 +11,7 @@ class unsupervise_Trainer(object):
         self.print_freq = cfg.PRINT_FREQ
         self.vis=cfg.VIS
         self.logger=logger
-        self.loss_name=cfg.MODEL.loss_name
-        self.meter={name:AverageMeter(name) for name in self.loss_name}
+        self.meter={}
         self.lr_scheduler=lr_scheduler
 
     def train(self, epoch, real_data_loader, camera_data_loader, optimizer):
@@ -43,6 +42,9 @@ class unsupervise_Trainer(object):
             for name in loss_dict:
                 l=loss_dict[name]
                 loss=loss+l
+                if name not in self.meter:
+                    self.meter[name]=AverageMeter(name)
+                    self.meter[name].reset()
                 self.meter[name].update(l.item(),num_images)
             
             
